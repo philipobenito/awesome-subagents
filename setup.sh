@@ -6,8 +6,7 @@
 # Creates or removes symlinks from Claude Code, OpenCode, and Cursor config
 # directories to the agent definitions in this repository.
 #
-# Requires bash 4+ (for associative arrays). macOS ships bash 3.2 by default;
-# install a newer version via Homebrew: brew install bash
+# Compatible with bash 3.2+. macOS ships bash 3.2 by default.
 #
 # Claude Code symlinks directly from categories/ (no generation needed).
 # OpenCode symlinks from agent-specific/opencode/ (run generate.sh first).
@@ -23,12 +22,6 @@
 
 set -euo pipefail
 
-if (( BASH_VERSINFO[0] < 4 )); then
-    echo "Error: bash 4+ is required. You have bash ${BASH_VERSION}." >&2
-    echo "On macOS, install a newer bash via Homebrew: brew install bash" >&2
-    exit 1
-fi
-
 # ---------------------------------------------------------------------------
 # Base paths
 # ---------------------------------------------------------------------------
@@ -38,37 +31,19 @@ CATEGORIES_DIR="$SCRIPT_DIR/categories"
 OUTPUT_DIR="$SCRIPT_DIR/agent-specific"
 
 # ---------------------------------------------------------------------------
-# Tool registry
+# Tool registry — parallel arrays, one entry per tool (same order throughout).
 #
-# To add a new tool:
-#   1. Append its key to TOOL_KEYS (controls checkbox display order)
-#   2. Add a block of five entries to TOOLS below, keyed as "<key>:<property>"
-#
+# To add a new tool: append one value to each TOOL_* array below.
 # No changes to any function are needed.
 # ---------------------------------------------------------------------------
 
-TOOL_KEYS=( claude opencode cursor )
 SYMLINK_NAME="awesome-subagents"
 
-declare -A TOOLS=(
-    [claude:label]="Claude Code"
-    [claude:source]="$CATEGORIES_DIR"
-    [claude:global_target]="$HOME/.claude/agents"
-    [claude:project_dir]=".claude/agents"
-    [claude:needs_generate]=false
-
-    [opencode:label]="OpenCode"
-    [opencode:source]="$OUTPUT_DIR/opencode"
-    [opencode:global_target]="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/agents"
-    [opencode:project_dir]=".opencode/agents"
-    [opencode:needs_generate]=true
-
-    [cursor:label]="Cursor"
-    [cursor:source]="$OUTPUT_DIR/cursor"
-    [cursor:global_target]="$HOME/.cursor/agents"
-    [cursor:project_dir]=".cursor/agents"
-    [cursor:needs_generate]=true
-)
+TOOL_LABELS=(         "Claude Code"          "OpenCode"                                            "Cursor"              )
+TOOL_SOURCES=(        "$CATEGORIES_DIR"      "$OUTPUT_DIR/opencode"                               "$OUTPUT_DIR/cursor"  )
+TOOL_GLOBAL_TARGETS=( "$HOME/.claude/agents" "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/agents"  "$HOME/.cursor/agents" )
+TOOL_PROJECT_DIRS=(   ".claude/agents"       ".opencode/agents"                                   ".cursor/agents"      )
+TOOL_NEEDS_GENERATE=( false                  true                                                  true                  )
 
 # ---------------------------------------------------------------------------
 # Colours
@@ -119,15 +94,16 @@ build_tool_options() {
     local mode="$1"
     local _return_var="$2"
     local _opts=()
+    local i
 
-    for key in "${TOOL_KEYS[@]}"; do
-        local label="${TOOLS[$key:label]}"
+    for (( i=0; i<${#TOOL_LABELS[@]}; i++ )); do
+        local label="${TOOL_LABELS[$i]}"
         if [[ "$mode" == "global" ]]; then
-            local target="${TOOLS[$key:global_target]}"
+            local target="${TOOL_GLOBAL_TARGETS[$i]}"
             local display="${target/#$HOME/\~}"
             _opts+=( "$label ($display/$SYMLINK_NAME/)" )
         else
-            _opts+=( "$label (${TOOLS[$key:project_dir]}/$SYMLINK_NAME/)" )
+            _opts+=( "$label (${TOOL_PROJECT_DIRS[$i]}/$SYMLINK_NAME/)" )
         fi
     done
 
@@ -190,8 +166,8 @@ select_tools() {
         case "$key" in
             $'\x1b')
                 local seq1 seq2
-                IFS= read -rsn1 -t 0.1 seq1 </dev/tty 2>/dev/null || seq1=""
-                IFS= read -rsn1 -t 0.1 seq2 </dev/tty 2>/dev/null || seq2=""
+                IFS= read -rsn1 -t 1 seq1 </dev/tty 2>/dev/null || seq1=""
+                IFS= read -rsn1 -t 1 seq2 </dev/tty 2>/dev/null || seq2=""
                 if [[ "$seq1" == "[" ]]; then
                     case "$seq2" in
                         A) (( cursor_pos > 0 )) && (( cursor_pos-- )) || true ;;
@@ -332,12 +308,11 @@ cmd_global() {
     select_tools chosen "${tool_options[@]}"
 
     for idx in "${chosen[@]}"; do
-        local key="${TOOL_KEYS[$idx]}"
-        local label="${TOOLS[$key:label]}"
-        local source="${TOOLS[$key:source]}"
-        local target="${TOOLS[$key:global_target]}"
+        local label="${TOOL_LABELS[$idx]}"
+        local source="${TOOL_SOURCES[$idx]}"
+        local target="${TOOL_GLOBAL_TARGETS[$idx]}"
 
-        if [[ "${TOOLS[$key:needs_generate]}" == true ]]; then
+        if [[ "${TOOL_NEEDS_GENERATE[$idx]}" == true ]]; then
             check_generated "$source" "$label" || continue
         fi
 
@@ -378,12 +353,11 @@ cmd_project() {
     select_tools chosen "${tool_options[@]}"
 
     for idx in "${chosen[@]}"; do
-        local key="${TOOL_KEYS[$idx]}"
-        local label="${TOOLS[$key:label]}"
-        local source="${TOOLS[$key:source]}"
-        local target="$abs_project/${TOOLS[$key:project_dir]}"
+        local label="${TOOL_LABELS[$idx]}"
+        local source="${TOOL_SOURCES[$idx]}"
+        local target="$abs_project/${TOOL_PROJECT_DIRS[$idx]}"
 
-        if [[ "${TOOLS[$key:needs_generate]}" == true ]]; then
+        if [[ "${TOOL_NEEDS_GENERATE[$idx]}" == true ]]; then
             check_generated "$source" "$label" || continue
         fi
 
@@ -410,10 +384,9 @@ cmd_unlink_global() {
     select_tools chosen "${tool_options[@]}"
 
     for idx in "${chosen[@]}"; do
-        local key="${TOOL_KEYS[$idx]}"
-        local label="${TOOLS[$key:label]}"
-        local source="${TOOLS[$key:source]}"
-        local target="${TOOLS[$key:global_target]}"
+        local label="${TOOL_LABELS[$idx]}"
+        local source="${TOOL_SOURCES[$idx]}"
+        local target="${TOOL_GLOBAL_TARGETS[$idx]}"
 
         echo ""
         echo -e "${BOLD}Removing global $label symlink${NC}"
@@ -451,10 +424,9 @@ cmd_unlink_project() {
     select_tools chosen "${tool_options[@]}"
 
     for idx in "${chosen[@]}"; do
-        local key="${TOOL_KEYS[$idx]}"
-        local label="${TOOLS[$key:label]}"
-        local source="${TOOLS[$key:source]}"
-        local target="$abs_project/${TOOLS[$key:project_dir]}"
+        local label="${TOOL_LABELS[$idx]}"
+        local source="${TOOL_SOURCES[$idx]}"
+        local target="$abs_project/${TOOL_PROJECT_DIRS[$idx]}"
 
         echo ""
         echo -e "${BOLD}Removing $label symlink from $abs_project${NC}"
@@ -472,8 +444,6 @@ cmd_unlink_project() {
 usage() {
     cat << EOF
 Usage: $(basename "$0") <command> [options]
-
-Requires bash 4+. macOS ships bash 3.2; install via Homebrew: brew install bash
 
 Commands:
     global                  Symlink agents into global config directories.
